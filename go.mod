@@ -1,4 +1,4 @@
-module s3dis
+module github.com/zenozeng/s3dis
 
 go 1.20
 
@@ -6,6 +6,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/minio/minio-go/v7 v7.0.53
 	github.com/onsi/gomega v1.27.7
+	go.etcd.io/bbolt v1.3.7
 )
 
 require (

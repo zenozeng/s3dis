@@ -106,3 +106,7 @@ func (s *ObjectStorage) PutObject(ctx context.Context, objectPath string, value 
 	_, err := s.minioClient.PutObject(ctx, s.bucket, path.Join(s.pathPrefix, objectPath), bytes.NewReader(value), int64(len(value)), minio.PutObjectOptions{})
 	return err
 }
+
+func (s *ObjectStorage) MakeBucket(ctx context.Context, bucketName string) error {
+	return s.minioClient.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
+}
