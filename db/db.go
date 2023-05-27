@@ -63,7 +63,18 @@ func (db *Database) electLeader() error {
 	if err != nil {
 		return err
 	}
-	return db.storage.PutObject(context.Background(), "system/leader.json", data)
+	err = db.storage.PutObject(context.Background(), "system/leader.json", data)
+	if err != nil {
+		return err
+	}
+	leader, err := db.getLeader()
+	if err != nil {
+		return err
+	}
+	if db.uuid != leader.UUID {
+		return fmt.Errorf("failed to set leader leader.uuid=%s, db.uuid=%s", leader.UUID, db.uuid)
+	}
+	return nil
 }
 
 func (db *Database) getLeader() (*Leader, error) {
