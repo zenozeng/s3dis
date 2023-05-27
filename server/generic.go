@@ -1,7 +1,14 @@
 package server
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 func (c *Server) Info(ctx context.Context) (string, error) {
-	return "db0: keys=0,expires=0", nil
+	info, err := c.db.Info(ctx)
+	if err != nil {
+		return "", nil
+	}
+	return fmt.Sprintf("db0: keys=%d,expires=%d,total_write_commands_processed=%d", info.Keys, info.Expires, info.TotalWriteCommandsProcessed), nil
 }

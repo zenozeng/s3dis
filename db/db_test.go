@@ -87,3 +87,18 @@ func TestLeaderChanged(t *testing.T) {
 	g.Expect(err).To(BeNil())
 	g.Expect(res).To(Equal(val))
 }
+
+func TestInfo(t *testing.T) {
+	g := NewWithT(t)
+	info, err := db.Info(context.Background())
+	g.Expect(err).To(BeNil())
+	g.Expect(info).NotTo(BeNil())
+	err = db.Set(context.Background(), []byte(uuid.NewString()), func(b []byte, exp *time.Time) ([]byte, *time.Time, error) {
+		return []byte(uuid.NewString()), nil, nil
+	})
+	g.Expect(err).To(BeNil())
+	info2, err := db.Info(context.Background())
+	g.Expect(err).To(BeNil())
+	g.Expect(info2.Keys).To(Equal(info.Keys + 1))
+	g.Expect(info2.TotalWriteCommandsProcessed).To(Equal(info.TotalWriteCommandsProcessed + 1))
+}

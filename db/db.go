@@ -188,8 +188,8 @@ func (db *Database) migrateToV1(tx *bolt.Tx) ([]byte, error) {
 	return newVersion, systemBucket.Put([]byte("version"), newVersion)
 }
 
-func (c *Database) view(partitionId string, fn func(tx *bolt.Tx) error) error {
-	partition, err := c.getPartition(partitionId)
+func (db *Database) view(partitionId string, fn func(tx *bolt.Tx) error) error {
+	partition, err := db.getPartition(partitionId)
 	if err != nil {
 		return err
 	}
@@ -266,16 +266,19 @@ func (c *Database) Get(ctx context.Context, key []byte) ([]byte, *time.Time, err
 	return val, exp, err
 }
 
-func (c *Database) incrStat(bucket *bolt.Bucket, key []byte, incrBy int64) error {
-	v := bucket.Get(key)
-	if len(v) == 0 {
-		v = []byte("0")
+func MustParseInt(val []byte) int64 {
+	if len(val) == 0 {
+		return 0
 	}
-	n, err := strconv.ParseInt(string(v), 10, 64)
+	n, err := strconv.ParseInt(string(val), 10, 64)
 	if err != nil {
-		return err
+		panic(err)
 	}
-	n += incrBy
+	return n
+}
+
+func (db *Database) incrStat(bucket *bolt.Bucket, key []byte, incrBy int64) error {
+	n := MustParseInt(bucket.Get(key)) + incrBy
 	return bucket.Put(key, []byte(fmt.Sprintf("%d", n)))
 }
 
@@ -297,9 +300,9 @@ func (c *Database) incrStat(bucket *bolt.Bucket, key []byte, incrBy int64) error
 //	pxat: {
 //	    $key: "Unix timestamp at which the key will expire, in milliseconds."
 //	}
-func (c *Database) Set(ctx context.Context, key []byte, w func([]byte, *time.Time) ([]byte, *time.Time, error)) error {
-	partitionId := c.getPartitionId(key)
-	return c.update(partitionId, func(tx *bolt.Tx) error {
+func (db *Database) Set(ctx context.Context, key []byte, w func([]byte, *time.Time) ([]byte, *time.Time, error)) error {
+	partitionId := db.getPartitionId(key)
+	return db.update(partitionId, func(tx *bolt.Tx) error {
 		systemBucket, err := tx.CreateBucketIfNotExists([]byte("system"))
 		if err != nil {
 			return err
@@ -346,30 +349,30 @@ func (c *Database) Set(ctx context.Context, key []byte, w func([]byte, *time.Tim
 				return err
 			}
 		}
-		err = c.incrStat(systemBucket, []byte("total_write_commands_processed"), 1)
+		err = db.incrStat(systemBucket, []byte("total_write_commands_processed"), 1)
 		if err != nil {
 			return err
 		}
 		if len(prevVal) == 0 {
-			err = c.incrStat(systemBucket, []byte("keys"), 1)
+			err = db.incrStat(systemBucket, []byte("keys"), 1)
 			if err != nil {
 				return err
 			}
 			if exp != nil {
-				err = c.incrStat(systemBucket, []byte("expires"), 1)
+				err = db.incrStat(systemBucket, []byte("expires"), 1)
 				if err != nil {
 					return err
 				}
 			}
 		} else {
 			if prevExp != nil && exp == nil {
-				err = c.incrStat(systemBucket, []byte("expires"), -1)
+				err = db.incrStat(systemBucket, []byte("expires"), -1)
 				if err != nil {
 					return err
 				}
 			}
 			if prevExp == nil && exp != nil {
-				err = c.incrStat(systemBucket, []byte("expires"), 1)
+				err = db.incrStat(systemBucket, []byte("expires"), 1)
 				if err != nil {
 					return err
 				}
@@ -377,4 +380,50 @@ func (c *Database) Set(ctx context.Context, key []byte, w func([]byte, *time.Tim
 		}
 		return nil
 	})
+}
+
+type Info struct {
+	Keys                        int64
+	Expires                     int64
+	TotalWriteCommandsProcessed int64
+}
+
+func (db *Database) Info(ctx context.Context) (*Info, error) {
+	info := &Info{}
+	mu := &sync.Mutex{}
+	var resError error
+	workers := 100
+	wg := &sync.WaitGroup{}
+	wg.Add(workers)
+	queue := make(chan string, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for partitionID := range queue {
+				err := db.view(partitionID, func(tx *bolt.Tx) error {
+					systemBucket := tx.Bucket([]byte("system"))
+					if systemBucket == nil {
+						return nil
+					}
+					mu.Lock()
+					info.Keys += MustParseInt(systemBucket.Get([]byte("keys")))
+					info.Expires += MustParseInt(systemBucket.Get([]byte("expires")))
+					info.TotalWriteCommandsProcessed += MustParseInt(systemBucket.Get([]byte("total_write_commands_processed")))
+					mu.Unlock()
+					return nil
+				})
+				if err != nil {
+					mu.Lock()
+					resError = err
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for partitionID := 0; partitionID < db.MaxPartitionNum; partitionID++ {
+		queue <- fmt.Sprintf("%d", partitionID)
+	}
+	close(queue)
+	wg.Wait()
+	return info, resError
 }
